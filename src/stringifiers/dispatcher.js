@@ -219,11 +219,6 @@ async function handleTable(
         )
       )
     }
-    if (node.where) {
-      wheres.push(
-        await node.where(`${q(node.as)}`, node.args || {}, context, node)
-      )
-    }
   }
 
   if (thisIsNotTheEndOfThisBatch(node, parent)) {
@@ -285,6 +280,12 @@ async function handleTable(
       )
       // otherwite, just a regular left join on the table
     } else {
+      if (node.where) {
+        wheres.push(
+            await node.where(`${q(node.as)}`, node.args || {}, context, node)
+        )
+      }
+
       tables.push(`LEFT JOIN ${node.name} ${q(node.as)} ON ${joinCondition}`)
     }
 
