@@ -1,187 +1,108 @@
-"use strict";
+'use strict';
 
 Object.defineProperty(exports, "__esModule", {
   value: true
 });
-exports.default = void 0;
 
-var _assert = _interopRequireDefault(require("assert"));
+let joinMonster = (() => {
+  var _ref = _asyncToGenerator(function* (resolveInfo, context, dbCall, options = {}) {
+    const sqlAST = queryAST.queryASTToSqlAST(resolveInfo, options, context);
+    const { sql, shapeDefinition } = yield (0, _util.compileSqlAST)(sqlAST, context, options);
+    if (!sql) return {};
 
-var queryAST = _interopRequireWildcard(require("./query-ast-to-sql-ast"));
+    let data = yield (0, _util.handleUserDbCall)(dbCall, sql, sqlAST, shapeDefinition);
 
-var _arrayToConnection = _interopRequireDefault(require("./array-to-connection"));
+    data = (0, _arrayToConnection2.default)(data, sqlAST);
 
-var _aliasNamespace = _interopRequireDefault(require("./alias-namespace"));
+    yield (0, _batchPlanner2.default)(sqlAST, data, dbCall, context, options);
 
-var _batchPlanner = _interopRequireDefault(require("./batch-planner"));
+    if (Array.isArray(data)) {
+      const childrenToCheck = sqlAST.children.filter(function (child) {
+        return child.sqlBatch;
+      });
+      return data.filter(function (d) {
+        for (const child of childrenToCheck) {
+          if (d[child.fieldName] == null) {
+            return false;
+          }
+        }
+        return true;
+      });
+    }
 
-var _util = require("./util");
+    return data;
+  });
 
-function _getRequireWildcardCache() { if (typeof WeakMap !== "function") return null; var cache = new WeakMap(); _getRequireWildcardCache = function () { return cache; }; return cache; }
+  return function joinMonster(_x, _x2, _x3) {
+    return _ref.apply(this, arguments);
+  };
+})();
 
-function _interopRequireWildcard(obj) { if (obj && obj.__esModule) { return obj; } if (obj === null || typeof obj !== "object" && typeof obj !== "function") { return { default: obj }; } var cache = _getRequireWildcardCache(); if (cache && cache.has(obj)) { return cache.get(obj); } var newObj = {}; var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor; for (var key in obj) { if (Object.prototype.hasOwnProperty.call(obj, key)) { var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null; if (desc && (desc.get || desc.set)) { Object.defineProperty(newObj, key, desc); } else { newObj[key] = obj[key]; } } } newObj.default = obj; if (cache) { cache.set(obj, newObj); } return newObj; }
+let getNode = (() => {
+  var _ref2 = _asyncToGenerator(function* (typeName, resolveInfo, context, condition, dbCall, options = {}) {
+    const type = resolveInfo.schema._typeMap[typeName];
+    (0, _assert2.default)(type, `Type "${typeName}" not found in your schema.`);
+    (0, _assert2.default)(type._typeConfig.sqlTable, `joinMonster can't fetch a ${typeName} as a Node unless it has "sqlTable" tagged.`);
+
+    let where = (0, _util.buildWhereFunction)(type, condition, options);
+
+    const fakeParentNode = {
+      _fields: {
+        node: {
+          type,
+          name: type.name.toLowerCase(),
+          where
+        }
+      }
+    };
+    const namespace = new _aliasNamespace2.default(options.minify);
+    const sqlAST = {};
+    const fieldNodes = resolveInfo.fieldNodes || resolveInfo.fieldASTs;
+
+    queryAST.populateASTNode.call(resolveInfo, fieldNodes[0], fakeParentNode, sqlAST, namespace, 0, options, context);
+    queryAST.pruneDuplicateSqlDeps(sqlAST, namespace);
+    const { sql, shapeDefinition } = yield (0, _util.compileSqlAST)(sqlAST, context, options);
+    const data = (0, _arrayToConnection2.default)((yield (0, _util.handleUserDbCall)(dbCall, sql, sqlAST, shapeDefinition)), sqlAST);
+    yield (0, _batchPlanner2.default)(sqlAST, data, dbCall, context, options);
+    if (!data) return data;
+    data.__type__ = type;
+    return data;
+  });
+
+  return function getNode(_x4, _x5, _x6, _x7, _x8) {
+    return _ref2.apply(this, arguments);
+  };
+})();
+
+var _assert = require('assert');
+
+var _assert2 = _interopRequireDefault(_assert);
+
+var _queryAstToSqlAst = require('./query-ast-to-sql-ast');
+
+var queryAST = _interopRequireWildcard(_queryAstToSqlAst);
+
+var _arrayToConnection = require('./array-to-connection');
+
+var _arrayToConnection2 = _interopRequireDefault(_arrayToConnection);
+
+var _aliasNamespace = require('./alias-namespace');
+
+var _aliasNamespace2 = _interopRequireDefault(_aliasNamespace);
+
+var _batchPlanner = require('./batch-planner');
+
+var _batchPlanner2 = _interopRequireDefault(_batchPlanner);
+
+var _util = require('./util');
+
+function _interopRequireWildcard(obj) { if (obj && obj.__esModule) { return obj; } else { var newObj = {}; if (obj != null) { for (var key in obj) { if (Object.prototype.hasOwnProperty.call(obj, key)) newObj[key] = obj[key]; } } newObj.default = obj; return newObj; } }
 
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 
-/*         _ _ _                _
-  ___ __ _| | | |__   __ _  ___| | __
- / __/ _` | | | '_ \ / _` |/ __| |/ /
-| (_| (_| | | | |_) | (_| | (__|   <
- \___\__,_|_|_|_.__/ \__,_|\___|_|\_\
+function _asyncToGenerator(fn) { return function () { var gen = fn.apply(this, arguments); return new Promise(function (resolve, reject) { function step(key, arg) { try { var info = gen[key](arg); var value = info.value; } catch (error) { reject(error); return; } if (info.done) { resolve(value); } else { return Promise.resolve(value).then(function (value) { step("next", value); }, function (err) { step("throw", err); }); } } return step("next"); }); }; }
 
-     _       __ _       _ _   _
-  __| | ___ / _(_)_ __ (_) |_(_) ___  _ __  ___
- / _` |/ _ \ |_| | '_ \| | __| |/ _ \| '_ \/ __|
-| (_| |  __/  _| | | | | | |_| | (_) | | | \__ \
- \__,_|\___|_| |_|_| |_|_|\__|_|\___/|_| |_|___/
-*/
-
-/**
- * User-defined function that sends a raw SQL query to the databse.
- * @callback dbCall
- * @param {String} sql - The SQL generated by `joinMonster` for the batch fetching. Use it to get the data from your database.
- * @param {Function} [done] - An error-first "done" callback. Only define this parameter if you don't want to return a `Promise`.
- * @returns {Promise.<Array>} The raw data as a flat array of objects. Each object must represent a row from the result set.
- */
-
-/**
- * Function for generating a SQL expression.
- * @callback sqlExpr
- * @param {String} tableAlias - The alias generated for this table. Already double-quoted.
- * @param {Object} args - The GraphQL arguments for this field.
- * @param {Object} context - An Object with arbitrary contextual information.
- * @param {Object} sqlASTNode - Join Monster object that abstractly represents this field. Also includes a reference to its parent node. This is useful, for example, if you need to access the parent field's table alias or GraphQL arguments.
- * @returns {String|Promise.<String>} The RAW expression interpolated into the query to compute the column. Unsafe user input must be scrubbed.
- */
-
-/**
- * Function for generating a `WHERE` condition.
- * @callback where
- * @param {String} tableAlias - The alias generated for this table. Already double-quoted.
- * @param {Object} args - The GraphQL arguments for this field.
- * @param {Object} context - An Object with arbitrary contextual information.
- * @param {Object} sqlASTNode - Join Monster object that abstractly represents this field. Also includes a reference to its parent node. This is useful, for example, if you need to access the parent field's table alias or GraphQL arguments.
- * @returns {String|Promise.<String>} The RAW condition for the `WHERE` clause. Omitted if falsy value returned. Unsafe user input must be scrubbed.
- */
-
-/**
- * Function for generating a `JOIN` condition.
- * @callback sqlJoin
- * @param {String} parentTable - The alias generated for the parent's table. Already double-quoted.
- * @param {String} childTable - The alias for the child's table. Already double-quoted.
- * @param {Object} args - The GraphQL arguments for this field.
- * @param {Object} context - An Object with arbitrary contextual information.
- * @param {Object} sqlASTNode - Join Monster object that abstractly represents this field. Also includes a reference to its parent node. This is useful, for example, if you need to access the parent field's table alias or GraphQL arguments.
- * @returns {String} The RAW condition for the `LEFT JOIN`. Unsafe user input must be scrubbed.
- */
-
-/**
- * Rather than a constant value, its a function to dynamically return the value.
- * @callback thunk
- * @param {Object} args - The GraphQL arguments for this field.
- * @param {Object} context - An Object with arbitrary contextual information.
- */
-
-/* _                _
-  | |__   ___  __ _(_)_ __    ___  ___  _   _ _ __ ___ ___
-  | '_ \ / _ \/ _` | | '_ \  / __|/ _ \| | | | '__/ __/ _ \
-  | |_) |  __/ (_| | | | | | \__ \ (_) | |_| | | | (_|  __/
-  |_.__/ \___|\__, |_|_| |_| |___/\___/ \__,_|_|  \___\___|
-              |___/
-*/
-
-/**
- * Takes the GraphQL resolveInfo and returns a hydrated Object with the data.
- * @param {Object} resolveInfo - Contains the parsed GraphQL query, schema definition, and more. Obtained from the fourth argument to the resolver.
- * @param {Object} context - An arbitrary object that gets passed to the `where` function. Useful for contextual infomation that influeces the  `WHERE` condition, e.g. session, logged in user, localization.
- * @param {dbCall} dbCall - A function that is passed the compiled SQL that calls the database and returns a promise of the data.
- * @param {Object} [options]
- * @param {Boolean} options.minify - Generate minimum-length column names in the results table.
- * @param {String} options.dialect - The dialect of SQL your Database uses. Currently `'pg'`, `'oracle'`, `'mariadb'`, `'mysql'`, and `'sqlite3'` are supported.
- * @param {Object} options.dialectModule - An alternative to options.dialect. You can provide a custom implementation of one of the supported dialects.
- * @returns {Promise.<Object>} The correctly nested data from the database.
- */
-async function joinMonster(resolveInfo, context, dbCall, options = {}) {
-  // we need to read the query AST and build a new "SQL AST" from which the SQL and
-  const sqlAST = queryAST.queryASTToSqlAST(resolveInfo, options, context);
-  const {
-    sql,
-    shapeDefinition
-  } = await (0, _util.compileSqlAST)(sqlAST, context, options);
-  if (!sql) return {}; // call their function for querying the DB, handle the different cases, do some validation, return a promise of the object
-
-  let data = await (0, _util.handleUserDbCall)(dbCall, sql, sqlAST, shapeDefinition); // if they are paginating, we'll get back an array which is essentially a "slice" of the whole data.
-  // this function goes through the data tree and converts the arrays to Connection Objects
-
-  data = (0, _arrayToConnection.default)(data, sqlAST); // so far we handled the first "batch". up until now, additional batches were ignored
-  // this function recursively scanss the sqlAST and runs remaining batches
-
-  await (0, _batchPlanner.default)(sqlAST, data, dbCall, context, options); // check for batch data
-
-  if (Array.isArray(data)) {
-    const childrenToCheck = sqlAST.children.filter(child => child.sqlBatch);
-    return data.filter(d => {
-      for (const child of childrenToCheck) {
-        if (d[child.fieldName] == null) {
-          return false;
-        }
-      }
-
-      return true;
-    });
-  }
-
-  return data;
-}
-/**
- * A helper for resolving the Node type in Relay.
- * @param {String} typeName - The Name of the GraphQLObjectType
- * @param {Object} resolveInfo - Contains the parsed GraphQL query, schema definition, and more. Obtained from the fourth argument to the resolver.
- * @param {Object} context - An arbitrary object that gets passed to the `where` function. Useful for contextual infomation that influeces the  WHERE condition, e.g. session, logged in user, localization.
- * @param {where|Number|String|Array} condition - A value to determine the `where` function for searching the node. If it's a function, that function will be used as the `where` function. Otherwise, it is assumed to be the value(s) of the `primaryKey`. An array of values is needed for composite primary keys.
- * @param {Function} dbCall - A function that is passed the compiled SQL that calls the database and returns (a promise of) the data.
- * @param {Object} [options] - Same as `joinMonster` function's options.
- * @returns {Promise.<Object>} The correctly nested data from the database. The GraphQL Type is added to the "\_\_type\_\_" property, which is helpful for the `resolveType` function in the `nodeDefinitions` of **graphql-relay-js**.
- */
-
-
-async function getNode(typeName, resolveInfo, context, condition, dbCall, options = {}) {
-  // get the GraphQL type from the schema using the name
-  const type = resolveInfo.schema._typeMap[typeName];
-  (0, _assert.default)(type, `Type "${typeName}" not found in your schema.`);
-  (0, _assert.default)(type._typeConfig.sqlTable, `joinMonster can't fetch a ${typeName} as a Node unless it has "sqlTable" tagged.`); // we need to determine what the WHERE function should be
-
-  let where = (0, _util.buildWhereFunction)(type, condition, options); // our getGraphQLType expects every requested field to be in the schema definition. "node" isn't a parent of whatever type we're getting, so we'll just wrap that type in an object that LOOKS that same as a hypothetical Node type
-
-  const fakeParentNode = {
-    _fields: {
-      node: {
-        type,
-        name: type.name.toLowerCase(),
-        where
-      }
-    }
-  };
-  const namespace = new _aliasNamespace.default(options.minify);
-  const sqlAST = {};
-  const fieldNodes = resolveInfo.fieldNodes || resolveInfo.fieldASTs; // uses the same underlying function as the main `joinMonster`
-
-  queryAST.populateASTNode.call(resolveInfo, fieldNodes[0], fakeParentNode, sqlAST, namespace, 0, options, context);
-  queryAST.pruneDuplicateSqlDeps(sqlAST, namespace);
-  const {
-    sql,
-    shapeDefinition
-  } = await (0, _util.compileSqlAST)(sqlAST, context, options);
-  const data = (0, _arrayToConnection.default)(await (0, _util.handleUserDbCall)(dbCall, sql, sqlAST, shapeDefinition), sqlAST);
-  await (0, _batchPlanner.default)(sqlAST, data, dbCall, context, options);
-  if (!data) return data;
-  data.__type__ = type;
-  return data;
-}
-
-joinMonster.getNode = getNode; // expose the package version for debugging
+joinMonster.getNode = getNode;
 
 joinMonster.version = require('../package.json').version;
-var _default = joinMonster;
-exports.default = _default;
-//# sourceMappingURL=index.js.map
+exports.default = joinMonster;
